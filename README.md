@@ -8,8 +8,6 @@ A Python module built on top of Pytorch to solve Partial Differential Equations.
 
 ## Tutorials
 
-First steps [tutorial](./tutorials/tutorial.ipynb)
-
 ## Author
 
 Juan Sensio - juansensio03@gmail.com
