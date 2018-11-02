@@ -1,4 +1,10 @@
+import torch
+from torch.utils.data import DataLoader, Dataset
+from torch.autograd import Variable
+import numpy as np 
+
 from ..vars import IndependentVar, DependentVar, Param
+from .solution import Solution
 
 class PDE:
     def __init__(self, inputs=None, outputs=None, params=None):
@@ -9,6 +15,12 @@ class PDE:
         self.addInputs(inputs)
         self.addOutputs(outputs)
         self.addParams(params)
+        self.model = None
+        self.optimizer = None
+        self.init = False
+        self.dataset = None
+        self.epochs = 0
+        self.bs = 0
 
     def addInputs(self, inputs):
         if inputs:
@@ -34,7 +46,7 @@ class PDE:
                             var.isInput = True
                             var.values = []
                     self.inputs += [IndependentVar(input)]
-            elif isinstance(inputs, dict):        
+            elif isinstance(inputs, dict):   
                 for key in inputs:
                     addKey = True
                     for var in self.inputs:
@@ -128,13 +140,112 @@ class PDE:
 
     def summary(self):
         print('inputs: ', {var.name: var.values for var in self.inputs})
-        print('outputs: ', [var.name for var in self.outputs])
+        print('outputs: ', {var.name: var.values for var in self.outputs})
         print('params: ', {var.name: (var.isInput, var.values) for var in self.params})
         print('bocos: ', [boco.type for boco in self.bocos])
         print('')
 
-    def boco_summary(self):
+    def bocoSummary(self):
         for boco in self.bocos: boco.summary() 
             
     def computePdeLoss(self):
         print('This function has to be overloaded by a child class!')
+
+    def buildModel(self, topo):
+        n_inputs, n_outputs = len(self.inputs), len(self.outputs)
+        self.model = Solution(n_inputs, n_outputs, topo['layers'], topo['neurons'], topo['activations'])
+
+    def setSolverParams(self, lr=0.01, epochs=10, batch_size=10):
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
+        self.epochs = epochs
+        self.bs = batch_size
+        for boco in self.bocos:
+            boco.setSolverParams(batch_size)
+
+    def initialize(self):
+        self.dataset = PDEDataset(self.inputs)
+        self.dataloader = DataLoader(self.dataset, batch_size=self.bs, shuffle=False, num_workers=4)
+        for boco in self.bocos:
+            boco.initialize()
+        self.init = True
+
+    def solve(self, each_epoch_print=100):
+        if not self.init: self.initialize()
+        model = self.model 
+        optimizer = self.optimizer
+        params = {param.name: torch.FloatTensor(param.values) for param in self.params}
+        for epoch in range(self.epochs):
+            model.train()
+            total_loss = []
+
+            for inputs in self.dataloader:
+                # compute pde solution
+                inputs = Variable(inputs, requires_grad=True)
+                outputs = model(inputs)
+                # compute gradients of outputs w.r.t. inputs
+                grads = self.computeGrads(inputs, outputs)
+                # compute loss
+                loss = self.computePdeLoss(grads, params).pow(2).mean()
+                # compute bocos loss
+                for boco in self.bocos:
+                    loss += boco.computeLoss(model)
+
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+                total_loss.append(loss.data)
+
+            if not epoch % each_epoch_print or (epoch+1) == self.epochs:
+                print('Epoch: {}, Loss: {:4f} '.format(epoch, np.array(total_loss).mean()))
+
+    def computeGrads(self, inputs, outputs):
+        # compute gradients
+        _grads, = torch.autograd.grad(outputs, inputs, 
+                    grad_outputs=outputs.data.new(outputs.shape).fill_(1),
+                    create_graph=True, only_inputs=True)
+        # assign keys
+        grads = {}
+        for i, output in enumerate(self.outputs):
+            grads[output.name] = {}
+            for j, input in enumerate(self.inputs):
+                grads[output.name][input.name] = _grads[:,j] # ???
+        return grads
+
+    def eval(self, inputs):
+        # set values of inpenedent vars 
+        for key in inputs: 
+            for var in self.inputs:
+                if var.name == key: var.values = inputs[key]  
+        # build dataset
+        dataset = PDEDataset(self.inputs)
+        outputs = []
+        self.model.eval()
+        for i in range(len(dataset)):
+            input = dataset[i]
+            outputs.append(self.model(input).detach().numpy())
+        return outputs
+
+class PDEDataset(Dataset):
+    def __init__(self, inputs):
+        self.inputs = inputs 
+        # length of the dataset (all possible combinations)
+        self.len = 1
+        for input in self.inputs:
+            self.len *= len(input.values)
+        # modules
+        self.mods = []
+        for i, _ in enumerate(self.inputs):
+            mod = 1
+            for j, input in enumerate(self.inputs):
+                if j < i:
+                    mod *= len(input.values)
+            self.mods.append(mod)  
+        
+    def __len__(self):
+        return self.len
+
+    def __getitem__(self, idx):
+        item = np.zeros(len(self.inputs))
+        for i, input in enumerate(self.inputs):
+            item[i] = input.values[(idx // self.mods[i]) % len(input.values)]
+        return torch.from_numpy(item.astype(np.float32))
