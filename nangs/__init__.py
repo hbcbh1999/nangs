@@ -1,2 +1,2 @@
 from .pde import PDE
-from .bocos import *
+#from .bocos import *

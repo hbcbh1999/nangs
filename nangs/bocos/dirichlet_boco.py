@@ -2,33 +2,43 @@ import numpy as np
 from .boco import Boco
 import torch
 from torch.utils.data import DataLoader, Dataset
-from ..vars import IndependentVar, DependentVar
 from .loss import MSELoss 
+from ..utils import *
 
 class DirichletBoco(Boco):
-    def __init__(self, inputs, outputs):
+    def __init__(self, inputs, outputs, boco_inputs, boco_outputs):
         super().__init__()
         self.type = 'dirichlet'
-        if not isinstance(inputs, dict) or not isinstance(outputs, dict): 
-            raise ValueError('Inputs not valid')
-        
-        self.inputs = []
-        for key in inputs:
-            self.inputs += [IndependentVar(key, inputs[key])]
-  
-        self.outputs = []
-        for key in outputs:
-            self.outputs += [DependentVar(key, outputs[key])]
 
-    def check(self, inputs, outputs, params):
-        # check that the inputs are correct
-        for var in self.inputs: assert var.name in inputs, '{} is not an input'.format(key)
-        for var in self.outputs: assert var.name in outputs, '{} is not an output'.format(key)
+        checkValidDict(boco_inputs)
+        checkValidDict(boco_outputs)
 
-    def summary(self):
+        # check that the length of the inputs is the same than the outputs
+
+        # check that all inputs and outputs are present
+        checkDictArray(inputs, boco_inputs)
+        checkDictArray(outputs, boco_outputs)
+
+        # create empty list with same dimensions that inputs in pde
+        self.inputs, self.outputs = [], []
+        for input in inputs:
+            self.inputs.append([])
+        for output in outputs:
+            self.outputs.append([])
+
+        # extract arrays from dict and store in list, ordered by inputs in the pde
+        for k in inputs:
+            ix = inputs.index(k)
+            self.inputs[ix] = boco_inputs[k]
+
+        for k in outputs:
+            ix = outputs.index(k)
+            self.outputs[ix] = boco_outputs[k]
+
+    def summary(self, inputs, outputs, params):
         print('Dirichlet Boco Summary:')
-        print('Inputs: ', {var.name: var.values for var in self.inputs})
-        print('Outpus: ', {var.name: var.values for var in self.outputs})
+        print('Inputs: ', {name: values for name, values in zip(inputs, self.inputs)})
+        print('Outputs: ', {name: values for name, values in zip(outputs, self.outputs)})
         print('')
     
     def initialize(self):
@@ -40,7 +50,6 @@ class DirichletBoco(Boco):
         loss = []
         for inputs, outputs in self.dataloader:
             preds = model(inputs)
-            #print(inputs, preds, outputs)
             loss.append(self.loss(preds, outputs))
         return np.array(loss).sum()
 
@@ -50,14 +59,14 @@ class DirichletBocoDataset(Dataset):
         # length of the dataset (all possible combinations)
         self.len = 1
         for input in self.inputs:
-            self.len *= len(input.values)
+            self.len *= len(input)
         # modules
         self.mods = []
         for i, _ in enumerate(self.inputs):
             mod = 1
             for j, input in enumerate(self.inputs):
                 if j < i:
-                    mod *= len(input.values)
+                    mod *= len(input)
             self.mods.append(mod)  
         
     def __len__(self):
@@ -66,8 +75,7 @@ class DirichletBocoDataset(Dataset):
     def __getitem__(self, idx):
         item1, item2 = np.zeros(len(self.inputs)), np.zeros(len(self.outputs))
         for i, input in enumerate(self.inputs):
-            item1[i] = input.values[(idx // self.mods[i]) % len(input.values)]
+            item1[i] = input[(idx // self.mods[i]) % len(input)]
         for i, output in enumerate(self.outputs):
-            item2[i] = output.values[(idx // self.mods[i]) % len(output.values)]
-            #print(self.outputs[0].values[(idx // self.mods[i]) % len(output.values)])
+            item2[i] = output[(idx // self.mods[i]) % len(output)]
         return torch.from_numpy(item1.astype(np.float32)), torch.from_numpy(item2.astype(np.float32))
