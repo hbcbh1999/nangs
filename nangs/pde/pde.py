@@ -132,7 +132,7 @@ class PDE:
                 grads[output][input] = _grads[:,j] # ???
         return grads
 
-    def eval(self, inputs):
+    def eval(self, inputs, device):
         checkValidDict(inputs)
         checkDictArray(inputs, self.inputs)
         # set values of inpenedent vars 
@@ -148,7 +148,8 @@ class PDE:
         self.model.eval()
         for i in range(len(dataset)):
             input = dataset[i]
-            outputs.append(self.model(input).detach().numpy())
+            input = input.to(device)
+            outputs.append(self.model(input).cpu().detach().numpy())
         return outputs
 
 
