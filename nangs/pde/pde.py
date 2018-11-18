@@ -1,13 +1,14 @@
 import torch
 from torch.utils.data import DataLoader
 from torch.autograd import Variable
+from tqdm import tqdm
 
 from ..utils import *
 from .solution import Solution
 from .dataset import PDEDataset
 
 class PDE:
-    def __init__(self, inputs=None, outputs=None, params=None):
+    def __init__(self, inputs=None, outputs=None, params=[]):
 
         # assert vars are lists of strings
         checkIsListOfStr(inputs, 'Inputs')
@@ -19,6 +20,7 @@ class PDE:
         checkNoRepeatedSame(outputs)
         checkNoRepeatedSame(params)
         checkNoRepeated(inputs, outputs)
+        checkNoRepeated(inputs, params)
         checkNoRepeated(params, outputs)
 
         self.inputs = inputs
@@ -84,29 +86,31 @@ class PDE:
 
     def initialize(self):
         self.dataset = PDEDataset(self.inputValues)
-        self.dataloader = DataLoader(self.dataset, batch_size=self.bs, shuffle=False, num_workers=4)
+        self.dataloader = DataLoader(self.dataset, batch_size=self.bs, shuffle=True, num_workers=4)
         for boco in self.bocos:
             boco.initialize()
         self.init = True
 
-    def solve(self, device, each_epoch_print=100):
+    def solve(self, device, path, early_stop = 20):
         if not self.init: self.initialize()
         model = self.model 
         optimizer = self.optimizer
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=5, verbose=True, min_lr=0.00001)
         params = {k: torch.FloatTensor(v).to(device) for k, v in zip(self.params, self.paramValues)}
+        best_loss, stop = 1e8, 0
         for epoch in range(self.epochs):
             model.train()
             total_loss = []
 
-            for inputs in self.dataloader:
+            for inputs in tqdm(self.dataloader, ascii=True):
                 # compute pde solution
                 inputs = Variable(inputs, requires_grad=True)
                 inputs = inputs.to(device)
                 outputs = model(inputs)
                 # compute gradients of outputs w.r.t. inputs
-                grads = self.computeGrads(inputs, outputs)
+                grads, _inputs = self.computeGrads(inputs, outputs)
                 # compute loss
-                loss = self.computePdeLoss(grads, params).pow(2).mean()
+                loss = self.computePdeLoss(grads, _inputs, params).pow(2).mean()
                 # compute bocos loss
                 for boco in self.bocos:
                     loss += boco.computeLoss(model, device)
@@ -115,22 +119,39 @@ class PDE:
                 loss.backward()
                 optimizer.step()
                 total_loss.append(loss.data)
+                
+            total_loss = np.array(total_loss).mean()
+            if total_loss < best_loss:
+                best_loss = total_loss
+                torch.save(self.model.state_dict(), path)
+                print('Best model, saved !')
+                stop = 0
 
-            if not epoch % each_epoch_print or (epoch+1) == self.epochs:
-                print('Epoch: {}, Loss: {:4f} '.format(epoch, np.array(total_loss).mean()))
+            stop += 1
+            if stop > early_stop:
+                print('Early stop !')
+                break
+            
+            scheduler.step(total_loss)
+
+            print('Epoch: {}, Loss: {:4f} '.format(epoch, total_loss))
 
     def computeGrads(self, inputs, outputs):
         # compute gradients
         _grads, = torch.autograd.grad(outputs, inputs, 
                     grad_outputs=outputs.data.new(outputs.shape).fill_(1),
                     create_graph=True, only_inputs=True)
-        # assign keys
+        # assign keys to gradients
         grads = {}
         for output in self.outputs:
             grads[output] = {}
             for j, input in enumerate(self.inputs):
                 grads[output][input] = _grads[:,j] # ???
-        return grads
+        # assign keys to inputs
+        _inputs = {}
+        for i, input in enumerate(self.inputs):
+            _inputs[input] = inputs[:,i]
+        return grads, _inputs
 
     def eval(self, inputs, device):
         checkValidDict(inputs)
