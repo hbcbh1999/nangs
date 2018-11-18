@@ -9,7 +9,7 @@ A Python module built on top of Pytorch to solve Partial Differential Equations.
 ## Tutorials
 
 - First steps [tutorial](./tutorials/tutorial.ipynb)
-- One-dimensional Advection Eqaution [example](./tutorialsadv2d.ipynb)
+- One-dimensional Advection Eqaution [example](./tutorials/adv1d.ipynb)
 
 ## Author
 
