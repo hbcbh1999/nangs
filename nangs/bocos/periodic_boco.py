@@ -48,9 +48,11 @@ class PeriodicBoco(Boco):
         self.dataloader = DataLoader(self.dataset, batch_size=self.bs, shuffle=False, num_workers=4)
         self.loss = MSELoss()
 
-    def computeLoss(self, model):
+    def computeLoss(self, model, device):
         loss = []
         for inputs1, inputs2 in self.dataloader:
+            inputs1 = inputs1.to(device)
+            inputs2 = inputs2.to(device)
             outputs1 = model(inputs1)
             outputs2 = model(inputs2)
             loss.append(self.loss(outputs1, outputs2))

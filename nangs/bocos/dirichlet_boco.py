@@ -46,9 +46,10 @@ class DirichletBoco(Boco):
         self.dataloader = DataLoader(self.dataset, batch_size=self.bs, shuffle=False, num_workers=4)
         self.loss = MSELoss()
 
-    def computeLoss(self, model):
+    def computeLoss(self, model, device):
         loss = []
         for inputs, outputs in self.dataloader:
+            inputs, outputs = inputs.to(device), outputs.to(device)
             preds = model(inputs)
             loss.append(self.loss(preds, outputs))
         return np.array(loss).sum()

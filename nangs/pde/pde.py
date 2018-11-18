@@ -70,9 +70,10 @@ class PDE:
     def computePdeLoss(self):
         print('This function has to be overloaded by a child class!')
 
-    def buildModel(self, topo):
+    def buildModel(self, topo, device):
         n_inputs, n_outputs = len(self.inputs), len(self.outputs)
         self.model = Solution(n_inputs, n_outputs, topo['layers'], topo['neurons'], topo['activations'])
+        self.model.to(device)
 
     def setSolverParams(self, lr=0.01, epochs=10, batch_size=10):
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
@@ -88,11 +89,11 @@ class PDE:
             boco.initialize()
         self.init = True
 
-    def solve(self, each_epoch_print=100):
+    def solve(self, device, each_epoch_print=100):
         if not self.init: self.initialize()
         model = self.model 
         optimizer = self.optimizer
-        params = {k: torch.FloatTensor(v) for k, v in zip(self.params, self.paramValues)}
+        params = {k: torch.FloatTensor(v).to(device) for k, v in zip(self.params, self.paramValues)}
         for epoch in range(self.epochs):
             model.train()
             total_loss = []
@@ -100,6 +101,7 @@ class PDE:
             for inputs in self.dataloader:
                 # compute pde solution
                 inputs = Variable(inputs, requires_grad=True)
+                inputs = inputs.to(device)
                 outputs = model(inputs)
                 # compute gradients of outputs w.r.t. inputs
                 grads = self.computeGrads(inputs, outputs)
@@ -107,7 +109,7 @@ class PDE:
                 loss = self.computePdeLoss(grads, params).pow(2).mean()
                 # compute bocos loss
                 for boco in self.bocos:
-                    loss += boco.computeLoss(model)
+                    loss += boco.computeLoss(model, device)
 
                 optimizer.zero_grad()
                 loss.backward()
