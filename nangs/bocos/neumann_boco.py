@@ -5,52 +5,55 @@ from torch.utils.data import DataLoader, Dataset
 from .loss import MSELoss 
 from ..utils import *
 
-class DirichletBoco(Boco):
-    def __init__(self, inputs, outputs, boco_inputs, boco_outputs):
+class NeumannBoco(Boco):
+    def __init__(self, inputs, outputs, boco_inputs):
         super().__init__()
-        self.type = 'dirichlet'
+        self.type = 'neumann'
 
         checkValidDict(boco_inputs)
-        checkValidDict(boco_outputs)
 
         # check that the length of the inputs is the same than the outputs
 
         # check that all inputs and outputs are present
         checkDictArray(inputs, boco_inputs)
-        checkDictArray(outputs, boco_outputs)
 
         # create empty list with same dimensions that inputs in pde
-        self.inputs, self.outputs = [], []
+        self.inputs = []
         for input in inputs:
             self.inputs.append([])
         for output in outputs:
             self.outputs.append([])
-
+            
         # extract arrays from dict and store in list, ordered by inputs in the pde
         for k in inputs:
             ix = inputs.index(k)
             self.inputs[ix] = boco_inputs[k]
 
-        for k in outputs:
-            ix = outputs.index(k)
-            self.outputs[ix] = boco_outputs[k]
-
     def summary(self, inputs, outputs, params):
-        print('Dirichlet Boco Summary:')
-        print('Inputs: ', {name: values for name, values in zip(inputs, self.inputs)})
-        print('Outputs: ', {name: values for name, values in zip(outputs, self.outputs)})
+        print('Neumann Boco Summary:')
+        print('Inputs: ', {name: values for name, values in inputs})
         print('')
     
     def initialize(self):
-        self.dataset = DirichletBocoDataset(self.inputs, self.outputs)
+        self.dataset = NeumannBocoDataset(self.inputs)
         self.dataloader = DataLoader(self.dataset, batch_size=self.bs, shuffle=True, num_workers=4)
         self.loss = MSELoss()
 
     def computeLoss(self, model, device):
         loss = []
-        for inputs, outputs in self.dataloader:
-            inputs, outputs = inputs.to(device), outputs.to(device)
+        for inputs in self.dataloader:
+            inputs = inputs.to(device)
             preds = model(inputs)
+            # compute gradients
+            _grads, = torch.autograd.grad(pred, inputs, 
+                        grad_outputs=preds.data.new(preds.shape).fill_(1),
+                        create_graph=True, only_inputs=True)
+            # assign keys to gradients
+            grads = {}
+            for output in self.outputs:
+                grads[output] = {}
+                for j, input in enumerate(self.inputs):
+                    grads[output][input] = _grads[:,j] # ???
             loss.append(self.loss(preds, outputs))
         return np.array(loss).sum()
 

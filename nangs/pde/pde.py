@@ -106,6 +106,7 @@ class PDE:
                 # compute pde solution
                 inputs = Variable(inputs, requires_grad=True)
                 inputs = inputs.to(device)
+                #print(inputs)
                 outputs = model(inputs)
                 # compute gradients of outputs w.r.t. inputs
                 grads, _inputs = self.computeGrads(inputs, outputs)
@@ -134,7 +135,7 @@ class PDE:
             
             scheduler.step(total_loss)
 
-            print('Epoch: {}, Loss: {:4f} '.format(epoch, total_loss))
+            print('Epoch: {}, Loss: {:4f} '.format(epoch+1, total_loss))
 
     def computeGrads(self, inputs, outputs):
         # compute gradients
@@ -171,6 +172,6 @@ class PDE:
             input = dataset[i]
             input = input.to(device)
             outputs.append(self.model(input).cpu().detach().numpy())
-        return outputs
+        return np.array(outputs)
 
 
